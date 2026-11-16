@@ -1,0 +1,21 @@
+# Large rasters
+data/raw/*
+data/processed/*.tif
+data/processed/*.tiff
+
+# Keep the folders in the repo
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# QGIS autosave/backups
+*.qgz~
+*.qgs~
+*.aux.xml
+
+# Blender backups
+*.blend1
+*.blend2
+
+# OS junk
+.DS_Store
+Thumbs.db
