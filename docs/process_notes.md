@@ -1,6 +1,21 @@
 # Ghana Elevation Maps: Process Notes
 
-Step-by-step record of the workflow so far, from folder setup to the finished print layout. Written 16 November 2026. Remaining work: the plain elevation and topographic map variants, then the 3D model in Blender.
+Step-by-step record of the whole workflow: data, QGIS maps, heightmap and texture, and the Blender 3D relief model. Last updated 17 November 2026.
+
+**Pipeline in one line:** Copernicus DEM (30 m, degrees) > clip to Ghana (NoData -9999) > reproject to UTM 30N at 90 m > hillshade + contours > QGIS print layout. From the same 90 m DEM: 16-bit heightmap + aligned colour texture > Blender (Solidify + Displace) > render.
+
+## Key numbers to remember
+
+| Item | Value |
+|---|---|
+| Project CRS | EPSG:32630, WGS 84 / UTM zone 30N |
+| Highest point | about 880 m (Mount Afadja) |
+| Heightmap extent (E/N, metres) | W 471674.85, E 965234.85, S 523600.37, N 1238380.37 |
+| Real size covered | 493.56 km wide x 714.78 km tall (ratio 0.6905) |
+| Heightmap | 2000 x 2896 px, UInt16, about 247 m per pixel |
+| Colour texture | 4936 x 7148 px, 100 m per pixel, same extent as the heightmap |
+| Blender plane | about 82.85 x 119.97 units, 1 unit is about 5.96 km |
+| Relief exaggeration | about 6.8 x Displace strength |
 
 ## 1. Project setup
 
@@ -19,19 +34,22 @@ ghana-elevation-maps/
 ├── qgis/             ghana_elevation.qgz
 ├── styles/           saved .qml layer styles
 ├── outputs/
-│   ├── maps/         exported PNG/PDF
-│   └── textures/     images for Blender
-├── blender/          ghana_3d.blend
-└── docs/             notes.md
+│   ├── maps/         exported PNG/PDF from print layouts
+│   ├── textures/     heightmap and colour texture for Blender
+│   └── renders/      final Blender renders
+├── blender/
+│   ├── ghana_3d.blend (and later versions)
+│   └── scripts/      the .py helper scripts
+└── docs/             notes.md, process_notes.md
 ```
 
 ### Git
 
 - Repository managed with GitHub Desktop.
-- `.gitignore` excludes large rasters (`data/raw/*`, `data/processed/*.tif`), QGIS backups, Blender backups (`*.blend1`) and OS junk.
+- `.gitignore` excludes large rasters (`data/raw/*`, `data/processed/*.tif`), large textures (`outputs/textures/*.tif`, `outputs/textures/*.png`), QGIS backups, Blender backups (`*.blend1`) and OS junk.
 - `.gitkeep` files keep empty folders tracked.
-- Committed: QGIS project, styles, notes, small vector data, final exports.
-- Not committed: DEMs and other large GeoTIFFs. Their sources are recorded in `docs/notes.md` so they can be re-downloaded.
+- Committed: QGIS project, styles, notes, scripts, small vector data, the `.blend` file (about 11 MB), final exports and renders.
+- Not committed: DEMs, heightmap and textures. GitHub rejects files over 100 MB and the first texture was 105 MB. Everything git-ignored can be regenerated from the steps below, and sources are recorded in `docs/notes.md`.
 - In QGIS, Project > Properties > General > Save paths is set to **Relative**.
 
 ## 2. Getting the DEM
@@ -63,7 +81,7 @@ ghana-elevation-maps/
 
 1. Layer Properties > Symbology > Render type: **Singleband pseudocolor**.
 2. Min/Max: choose **User defined** first, then type 0 and 880. If a value reverts, edit the last row of the colour table directly.
-3. Colour ramp: Spectral, inverted so blue/green is low and red is high. A custom terrain ramp (greens to browns) was also planned, with more stops in the low range because most of Ghana is below 300 m.
+3. Colour ramp: Spectral, inverted so blue/green is low and red is high. A custom terrain ramp (greens to browns) works too, with more stops in the low range because most of Ghana is below 300 m.
 4. Mode: Continuous or Linear.
 
 ## 5. Boundary and clipping
@@ -156,7 +174,123 @@ If Ghana sits off-centre in the frame, use the Move item content tool, or zoom t
 
 Layout > Export as Image or PDF at 300 dpi, saved to `outputs/maps/`.
 
-## 10. Problems met and how they were solved
+## 10. Heightmap for Blender
+
+A heightmap is a greyscale image where dark is low and bright is high. Blender pushes a flat grid up according to it. It must be **16-bit**, otherwise the terrain looks stepped.
+
+1. Raster > Conversion > **Translate (Convert Format)**.
+2. Input: `ghana_dem_utm30_90m`. Output data type: **UInt16**.
+3. Advanced Parameters > Additional command-line parameters:
+
+```
+-scale 0 880 1 65535 -a_nodata 0 -outsize 2000 0
+```
+
+   - `-scale 0 880 1 65535` maps 0 m to the darkest value and 880 m to white.
+   - `-a_nodata 0` makes the sea (NoData) pure black, so land always sits above it.
+   - `-outsize 2000 0` shrinks the width to 2000 px and keeps the proportions. The full 90 m raster is far too large to displace in Blender.
+4. Save to `outputs/textures/ghana_heightmap_16bit.tif`.
+5. Result: 2000 x 2896 px, UInt16, pixel about 247 m, NoData 0. The displayed Min/Max in QGIS is an estimate, so ignore it. Note the extent and size from the Information tab (see Key numbers).
+
+## 11. Colour texture for Blender (and the alignment lesson)
+
+The texture must cover **exactly the same extent** as the heightmap. Blender stretches each image across the plane independently, so any difference in extent makes the colours slide against the terrain.
+
+### Preparing the view
+
+- Visible layers: the hillshade (Multiply) and the coloured DEM only. Turn off the boundary, contours and heightmap layer.
+- Project > Properties > General > Background colour: pale blue `#bcd4e6`, so the sea is not transparent or black.
+- Project CRS must be EPSG:32630.
+
+### What did not work
+
+- **Project > Import/Export > Export Map to Image.** The extent boxes were overridden by the scale setting. The export covered an area about 9 times too large, and Ghana filled only about 11% of the picture width.
+- **Convert map to raster** (Processing Toolbox) with extent from the heightmap layer and 100 m per pixel. It worked, but it pads the output to whole 1024-pixel tiles: 5120 x 7168 px, reaching 18.4 km further east and 2 km further south than the heightmap.
+
+### What worked
+
+1. Run **Convert map to raster**: Extent > Calculate from Layer > heightmap, Map units per pixel 100, background `#bcd4e6`, transparent background off. Save as `outputs/textures/ghana_texture.tif`.
+2. Run Raster > Extraction > **Clip Raster by Extent**: input `ghana_texture`, extent Calculate from Layer > heightmap, save as `outputs/textures/ghana_texture_aligned.tif`.
+3. Check Properties > Information: the extent should match the heightmap's. Result: 4936 x 7148 px, within 40 m on the east edge and 20 m on the south edge.
+4. Delete the earlier wrong exports so they are not loaded by mistake.
+
+## 12. Blender scene
+
+Files were saved by a Blender 5.x build. Menus can differ slightly between versions.
+
+### Grid
+
+1. Start a General project and delete the default cube (select, press X).
+2. Add > Mesh > Grid. In Adjust Last Operation set X Subdivisions 501 and Y Subdivisions 725 (about 364,000 vertices, square cells).
+3. Set Dimensions (N panel > Item) to about 82.85 x 119.97, or any size with the same 0.6905 ratio. Then Ctrl+A > Scale to apply it.
+
+### Displace modifier (the terrain)
+
+1. Modifiers tab > Add Modifier > Deform > Displace.
+2. Texture > New > texture properties > Type **Image or Movie** > Open the heightmap.
+3. Image colour space: **Non-Color** (the default would bend the greys and distort heights).
+4. Texture Extension: **Extend** (not Repeat). Repeat wraps the left edge onto the right edge.
+5. Displace settings: Direction **Z**, Texture Coordinates **UV** (UV map `UVMap`), Midlevel **0**, Strength about **4**.
+6. If the grid has no UVs: Tab, A, then U > Reset, then Tab.
+
+Exaggeration is about 6.8 x strength with this plane size, so strength 4 is about 27x. Ghana is very flat (880 m of relief over 715 km), so it needs it. Try 3 for subtle, 5 for clear, 8 for dramatic.
+
+### Material (the colours)
+
+1. Material tab > New. Base Color > connect an **Image Texture** and open `ghana_texture_aligned.tif`.
+2. Colour space **sRGB** (the opposite of the heightmap), Extension **Extend**, Interpolation Linear.
+3. Roughness **1.0**, Specular **0**, for a matte map look.
+4. Switch the viewport to **Material Preview** (Z menu, or the third sphere button).
+
+## 13. Making it a relief slab with a flat base
+
+A solid slab with thick sides reads like a physical relief model. Order matters.
+
+**What went wrong first:** the modifiers were Subdivision, Displace, Solidify. Solidify then thickened the already-raised terrain, so the underside copied the hills and bumps poked out from underneath.
+
+**Fix:** the stack is now Subdivision, **Solidify**, then **Displace**.
+
+1. **Subdivision Surface:** type Simple, Levels Viewport 0, Render 1. Smoother terrain in final renders while the viewport stays fast.
+2. **Solidify:** Thickness 3, Offset -1 (grows downward, top stays at sea level), Even Thickness on, Rim Material Index Offset 1, and **Shell Vertex Group** set to a new group called `SlabBottom`.
+3. **Displace:** Vertex Group `SlabBottom`, with the **invert arrow** on. This leaves the slab's bottom flat and raises only the top.
+4. **Second material** `GhanaRim` (slot 2): dark brown, base colour about (0.16, 0.11, 0.08), roughness 0.9. Without it, the map colours smear down the sides.
+5. If the sides show dark gradients along the top edge: Object > Shade Auto Smooth, angle about 35°.
+
+The same setup is in `blender/scripts/fix_slab_v3.py`.
+
+## 14. Lighting, camera and render
+
+### Sun
+
+- Sun light: strength 3, angle (shadow softness) 2°.
+- Direction: from the **north-west**, the map convention and the same as the QGIS hillshade (azimuth 315). Rotation X = 90° minus the elevation (50° for a 40° elevation), **Rotation Z = 225°**.
+- Earlier notes said Z 135°. That is wrong: it lights from the north-east and makes ridges look like valleys.
+
+### World and colour
+
+- World colour: soft light grey (about 0.93, 0.94, 0.96), strength 1.
+- Render properties > Color Management > View Transform: **Standard**. Filmic or AgX wash out the map colours.
+
+### Camera
+
+- Location (0, -125, 85), Rotation X 55.8°, Y 0, Z 0, focal length 40 mm, Clip End 2000.
+- Look through it with Numpad 0. This gives a three-quarter view over the whole slab. If Ghana is cut off, move the camera back or lower the focal length.
+- Output: 3000 x 4000, EEVEE. Set Resolution % to 50 for quick previews, and F12 to render.
+- Save the final image from the render window (Image > Save As) to `outputs/renders/ghana_3d_render.png`.
+
+## 15. Blender scripts
+
+Saved in `blender/scripts/`. Run each with Scripting tab > Text > Open > Alt+P. Each saves a new copy and leaves the original untouched. They were written without being able to run Blender, so check the console summary for any SKIP lines.
+
+| Script | Purpose |
+|---|---|
+| `refine_ghana_blend.py` | First attempt. Flattened the outer rows of the grid to hide a strip along the east edge. It did not fix the strip, because the real cause was the misaligned texture. Superseded. |
+| `improve_ghana_v2.py` | Relief strength, slab with dark sides, matte material, sun, camera, background and colour settings. Saves `ghana_3d_v2.blend`. |
+| `fix_slab_v3.py` | Fixes the modifier order so the base is flat. Saves `ghana_3d_v3.blend`. |
+
+Settings are at the top of each script and can be edited before re-running.
+
+## 16. Problems met and how they were solved
 
 | Problem | Cause | Fix |
 |---|---|---|
@@ -167,17 +301,38 @@ Layout > Export as Image or PDF at 300 dpi, saved to `outputs/maps/`.
 | UTM 30N missing in dropdown | Short recent-CRS list | Use the globe icon and search the full list |
 | Contours looked like a smudge | 50 m interval too dense at country scale | Use 100 m, or scale-dependent visibility |
 | Map off-centre in layout | Layout copied an off-centre canvas | Re-centre the canvas and reset the map extent |
+| Texture PNG showed Ghana tiny in a huge blue canvas | Export Map to Image scale box overrode the extent | Use Convert map to raster with the heightmap extent |
+| Blender colours shifted left, raised land under sea colour | Texture extent larger than heightmap (1024 px tile padding) | Clip the texture to the heightmap extent |
+| Raised strip along the right edge | Same misalignment, showing real Togo-border hills in sea colour | Aligned texture. Edge-flatten script was not the answer |
+| Repeat wrap-around at the edges | Texture extension left on Repeat | Set Extension to Extend on both images |
+| Bumpy underside, shapes poking out below | Solidify ran after Displace | Solidify before Displace, bottom shell excluded by vertex group |
+| Terrain looked flat | 880 m over 715 km, strength too low | Displace strength 4 to 8 |
+| Relief looked inverted or confusing | Sun from the north-east (Z 135°) | Sun Z 225° (north-west) |
+| Texture rejected by GitHub | 105 MB, over the 100 MB limit | Ignore `outputs/textures/*.tif` in `.gitignore` |
 
-## 11. Files and sources to remember
+## 17. Files and sources to remember
 
 - DEM: Copernicus GLO-30 DSM via OpenTopography, job `rt1794826510842`, downloaded 2026-11-16. Credit: European Space Agency (2024), https://doi.org/10.5069/G9028PQB
 - Boundary: geoBoundaries ADM0 Ghana, `data/external/ghana_boundary_adm0.geojson`.
 - Processed (git-ignored): `ghana_dem_clipped.tif`, `ghana_dem_utm30_90m.tif`, `ghana_hillshade.tif`, `ghana_contours_100m.gpkg`.
+- Blender inputs (git-ignored): `outputs/textures/ghana_heightmap_16bit.tif`, `outputs/textures/ghana_texture_aligned.tif`.
 - Styles: `styles/elevation_hypsometric.qml`, `styles/contours.qml`.
+- Blender: `blender/ghana_3d.blend` and later versions, scripts in `blender/scripts/`.
 
-## 12. Next steps
+## 18. Rebuild checklist (from scratch)
 
-1. Finish the legend (middle value) and contour labels.
-2. Produce the three map variants by toggling layers: plain elevation, elevation with hillshade, and the full topographic map with contours.
-3. Prepare Blender inputs: a 16-bit greyscale heightmap from the DEM (Raster > Conversion > Translate, UInt16, scaled 0 to 65535) and the styled map exported as a texture.
-4. Build the 3D model in Blender with a subdivided plane and Displace modifier, or the BlenderGIS add-on, using vertical exaggeration since Ghana is fairly flat.
+1. Download the DEM (section 2) and the boundary (section 5).
+2. Clip with NoData -9999, reproject to UTM 30N at 90 m (sections 5 and 6).
+3. Style, hillshade and contours (sections 4, 7 and 8), then the layout (section 9).
+4. Make the heightmap (section 10), then the texture and align it (section 11). Compare the two extents before opening Blender.
+5. Build the Blender scene (sections 12 to 14), or run `improve_ghana_v2.py` and `fix_slab_v3.py`.
+6. Render and commit (section 14 and the Git notes in section 1).
+
+## 19. Open items and next steps
+
+1. Confirm that `fix_slab_v3.py` gave a flat base, and settle the final relief strength.
+2. Finish the legend middle value and the contour labels in QGIS.
+3. Produce the three map variants by toggling layers: plain elevation, elevation with hillshade, and the full topographic map with contours.
+4. Final Blender render saved to `outputs/renders/`.
+5. Optional: more mesh detail (1000 x 1450 grid), or the BlenderGIS add-on for real-world scale. Compatibility of BlenderGIS with Blender 5.x was not confirmed from the official project, so test it on a copy first.
+6. Update the README with the project goal, CRS (EPSG:32630) and a link to these notes.

@@ -3,6 +3,10 @@ data/raw/*
 data/processed/*.tif
 data/processed/*.tiff
 
+# Large Blender inputs (regenerate from QGIS)
+outputs/textures/*.tif
+outputs/textures/*.tiff
+
 # Keep the folders in the repo
 !data/raw/.gitkeep
 !data/processed/.gitkeep
